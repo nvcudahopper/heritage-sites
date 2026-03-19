@@ -1,4 +1,5 @@
 import { neon } from "@neondatabase/serverless";
+import { createHash } from "crypto";
 
 // Vercel Neon integration may inject the URL under different env var names
 const dbUrl =
@@ -12,6 +13,10 @@ if (!dbUrl) {
 
 const sql = neon(dbUrl);
 
+function hashPassword(password) {
+  return createHash("sha256").update(password).digest("hex");
+}
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -24,6 +29,110 @@ export default async function handler(req, res) {
   const method = req.method;
 
   try {
+    // ============ Auth ============
+    // Register (email + password)
+    if (path === "/auth/register" && method === "POST") {
+      const b = req.body;
+      if (!b.email || !b.password || !b.name) {
+        return res.status(400).json({ error: "请填写邮箱、密码和昵称" });
+      }
+      const existing = await sql`SELECT id FROM users WHERE email = ${b.email}`;
+      if (existing.length > 0) {
+        return res.status(409).json({ error: "该邮箱已注册" });
+      }
+      const hash = hashPassword(b.password);
+      const rows = await sql`
+        INSERT INTO users (name, nickname, email, password_hash, role)
+        VALUES (${b.name}, ${b.name}, ${b.email}, ${hash}, 'user')
+        RETURNING id, name, nickname, email, role, avatar_url, is_active`;
+      return res.status(201).json(rows[0]);
+    }
+
+    // Login
+    if (path === "/auth/login" && method === "POST") {
+      const b = req.body;
+      if (!b.email || !b.password) {
+        return res.status(400).json({ error: "请填写邮箱和密码" });
+      }
+      const hash = hashPassword(b.password);
+      const rows = await sql`SELECT id, name, nickname, email, role, avatar_url, is_active FROM users WHERE email = ${b.email} AND password_hash = ${hash}`;
+      if (rows.length === 0) {
+        return res.status(401).json({ error: "邮箱或密码错误" });
+      }
+      if (!rows[0].is_active) {
+        return res.status(403).json({ error: "账号已被禁用" });
+      }
+      return res.json(rows[0]);
+    }
+
+    // Guest create (no password, just nickname)
+    if (path === "/auth/guest" && method === "POST") {
+      const b = req.body;
+      if (!b.name) {
+        return res.status(400).json({ error: "请填写昵称" });
+      }
+      const rows = await sql`
+        INSERT INTO users (name, nickname, role)
+        VALUES (${b.name}, ${b.name}, 'guest')
+        RETURNING id, name, nickname, email, role, avatar_url, is_active`;
+      return res.json(rows[0]);
+    }
+
+    // Update own profile (name, nickname, email, avatar, password)
+    if (path === "/auth/profile" && method === "PUT") {
+      const b = req.body;
+      if (!b.user_id) return res.status(400).json({ error: "缺少 user_id" });
+      const existing = await sql`SELECT * FROM users WHERE id = ${b.user_id}`;
+      if (existing.length === 0) return res.status(404).json({ error: "用户不存在" });
+      const c = existing[0];
+      
+      let newHash = c.password_hash;
+      if (b.new_password) {
+        newHash = hashPassword(b.new_password);
+      }
+      
+      const rows = await sql`
+        UPDATE users SET
+          name = ${b.name ?? c.name},
+          nickname = ${b.nickname ?? c.nickname},
+          email = ${b.email !== undefined ? b.email : c.email},
+          avatar_url = ${b.avatar_url !== undefined ? b.avatar_url : c.avatar_url},
+          password_hash = ${newHash}
+        WHERE id = ${b.user_id}
+        RETURNING id, name, nickname, email, role, avatar_url, is_active`;
+      return res.json(rows[0]);
+    }
+
+    // ============ Admin: User Management ============
+    if (path === "/admin/users" && method === "GET") {
+      const users = await sql`SELECT id, name, nickname, email, role, is_active, avatar_url, created_at FROM users ORDER BY id`;
+      // Add checkin count for each user
+      const result = [];
+      for (const u of users) {
+        const countRow = await sql`SELECT COUNT(*) as count FROM checkins WHERE user_id = ${u.id}`;
+        result.push({ ...u, checkin_count: Number(countRow[0].count) });
+      }
+      return res.json(result);
+    }
+
+    // Toggle user active status
+    const adminUserToggleMatch = path.match(/^\/admin\/users\/(\d+)\/toggle$/);
+    if (adminUserToggleMatch && method === "PUT") {
+      const id = Number(adminUserToggleMatch[1]);
+      const rows = await sql`UPDATE users SET is_active = NOT is_active WHERE id = ${id} AND role != 'admin' RETURNING id, is_active`;
+      if (rows.length === 0) return res.status(404).json({ error: "用户不存在或无法禁用管理员" });
+      return res.json(rows[0]);
+    }
+
+    // Delete user (admin only, can't delete admins)
+    const adminUserDeleteMatch = path.match(/^\/admin\/users\/(\d+)$/);
+    if (adminUserDeleteMatch && method === "DELETE") {
+      const id = Number(adminUserDeleteMatch[1]);
+      const rows = await sql`DELETE FROM users WHERE id = ${id} AND role != 'admin' RETURNING id`;
+      if (rows.length === 0) return res.status(404).json({ error: "用户不存在或无法删除管理员" });
+      return res.json({ ok: true });
+    }
+
     // ============ Sites ============
     if (path === "/sites" && method === "GET") {
       const { type, country, region, tag, era } = req.query || {};

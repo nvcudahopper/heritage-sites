@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { createHash } from "crypto";
 import { storage } from "./storage";
 import {
   insertSiteSchema, insertSiteEventSchema, insertSiteMediaSchema,
@@ -7,10 +8,96 @@ import {
   insertSiteRelationSchema, insertTagSchema, insertSiteTagSchema,
 } from "../shared/schema";
 
+function hashPassword(password: string) {
+  return createHash("sha256").update(password).digest("hex");
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  // ============ Auth ============
+  app.post("/api/auth/register", async (req, res) => {
+    try {
+      const { email, password, name } = req.body;
+      if (!email || !password || !name) return res.status(400).json({ error: "请填写邮箱、密码和昵称" });
+      const hash = hashPassword(password);
+      const user = await storage.registerUser(name, email, hash);
+      res.status(201).json(user);
+    } catch (e: any) {
+      if (e.message?.includes("已注册")) return res.status(409).json({ error: e.message });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) return res.status(400).json({ error: "请填写邮箱和密码" });
+      const hash = hashPassword(password);
+      const user = await storage.loginUser(email, hash);
+      if (!user) return res.status(401).json({ error: "邮箱或密码错误" });
+      if (!user.is_active) return res.status(403).json({ error: "账号已被禁用" });
+      res.json(user);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/auth/guest", async (req, res) => {
+    try {
+      const { name } = req.body;
+      if (!name) return res.status(400).json({ error: "请填写昵称" });
+      const user = await storage.createGuestUser(name);
+      res.json(user);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/auth/profile", async (req, res) => {
+    try {
+      const b = req.body;
+      if (!b.user_id) return res.status(400).json({ error: "缺少 user_id" });
+      const newHash = b.new_password ? hashPassword(b.new_password) : undefined;
+      const user = await storage.updateProfile(b.user_id, b.name, b.nickname, b.email, b.avatar_url, newHash);
+      if (!user) return res.status(404).json({ error: "用户不存在" });
+      res.json(user);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============ Admin: User Management ============
+  app.get("/api/admin/users", async (req, res) => {
+    try {
+      const users = await storage.getAllUsersWithStats();
+      res.json(users);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/admin/users/:id/toggle", async (req, res) => {
+    try {
+      const result = await storage.toggleUserActive(Number(req.params.id));
+      if (!result) return res.status(404).json({ error: "用户不存在或无法禁用管理员" });
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/admin/users/:id", async (req, res) => {
+    try {
+      const ok = await storage.deleteUser(Number(req.params.id));
+      if (!ok) return res.status(404).json({ error: "用户不存在或无法删除管理员" });
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 
   // ============ Sites ============
   app.get("/api/sites", async (req, res) => {

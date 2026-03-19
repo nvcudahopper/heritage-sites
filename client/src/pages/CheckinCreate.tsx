@@ -1,14 +1,14 @@
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import { ArrowLeft, Star, Camera, X } from "lucide-react";
+import { ArrowLeft, Star, Camera, User } from "lucide-react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { useCurrentUser } from "@/App";
+import { useAuth } from "@/App";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Site } from "@shared/schema";
 
@@ -16,12 +16,15 @@ export default function CheckinCreate() {
   const { id } = useParams<{ id: string }>();
   const [, navigate] = useLocation();
   const { toast } = useToast();
-  const currentUser = useCurrentUser();
+  const { user } = useAuth();
 
   const [visitedDate, setVisitedDate] = useState(new Date().toISOString().split("T")[0]);
   const [rating, setRating] = useState(5);
   const [note, setNote] = useState("");
   const [hoverRating, setHoverRating] = useState(0);
+
+  // Guest nickname state (only used when not logged in)
+  const [guestNickname, setGuestNickname] = useState("");
 
   const siteQuery = useQuery<Site>({
     queryKey: ["/api/sites", id],
@@ -33,13 +36,38 @@ export default function CheckinCreate() {
 
   const checkinMutation = useMutation({
     mutationFn: async () => {
+      let userId: number;
+
+      if (user) {
+        // Logged-in user
+        userId = user.id;
+      } else {
+        // Visitor: create guest user first
+        if (!guestNickname.trim()) {
+          throw new Error("请填写昵称");
+        }
+        const guestRes = await apiRequest("POST", "/api/auth/guest", {
+          name: guestNickname.trim(),
+        });
+        if (!guestRes.ok) {
+          const data = await guestRes.json();
+          throw new Error(data.message || data.error || "创建访客账户失败");
+        }
+        const guestData = await guestRes.json();
+        userId = guestData.id;
+      }
+
       const res = await apiRequest("POST", "/api/checkins", {
-        user_id: currentUser.id,
+        user_id: userId,
         site_id: Number(id),
         visited_date: visitedDate,
         rating,
         note: note || null,
       });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || data.error || "打卡失败");
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -56,6 +84,10 @@ export default function CheckinCreate() {
     e.preventDefault();
     if (!visitedDate) {
       toast({ title: "请选择日期", variant: "destructive" });
+      return;
+    }
+    if (!user && !guestNickname.trim()) {
+      toast({ title: "请填写昵称", variant: "destructive" });
       return;
     }
     checkinMutation.mutate();
@@ -83,6 +115,30 @@ export default function CheckinCreate() {
       <p className="text-sm text-muted-foreground mb-6">记录你的到访体验</p>
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        {/* Guest nickname (only shown when not logged in) */}
+        {!user && (
+          <div className="border rounded-lg p-4 bg-muted/30">
+            <div className="flex items-center gap-2 mb-3 text-sm font-medium text-muted-foreground">
+              <User size={14}/>
+              <span>访客打卡</span>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">昵称 <span className="text-red-400">*</span></label>
+              <Input
+                type="text"
+                value={guestNickname}
+                onChange={e => setGuestNickname(e.target.value)}
+                placeholder="输入你的昵称以记录打卡"
+                required
+                data-testid="input-guest-nickname"
+              />
+              <p className="text-xs text-muted-foreground mt-1.5">
+                <Link href="/login" className="text-primary hover:underline no-underline">登录</Link> 可保存完整记录
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Date */}
         <div>
           <label className="block text-sm font-medium mb-2">到访日期</label>

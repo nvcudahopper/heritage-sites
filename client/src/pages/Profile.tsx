@@ -1,16 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
 import { useParams, Link } from "wouter";
-import { MapPin, Star, Mountain, Building2, Landmark } from "lucide-react";
+import { MapPin, Star, Mountain, Building2, Landmark, Pencil } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import type { UserProfile } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
+import { useAuth } from "@/App";
 
 const typeLabels: Record<string, string> = { cave: "石窟", temple: "寺院", mountain: "山" };
 const typeIcons: Record<string, any> = { cave: Landmark, temple: Building2, mountain: Mountain };
 
 export default function Profile() {
   const { id } = useParams<{ id: string }>();
+  const { user: currentUser } = useAuth();
+  const isOwnProfile = currentUser !== null && String(currentUser.id) === String(id);
 
   const { data: profile, isLoading } = useQuery<UserProfile>({
     queryKey: ["/api/users", id, "profile"],
@@ -57,10 +61,18 @@ export default function Profile() {
         <div className="w-14 h-14 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xl font-bold">
           {(profile.nickname || profile.name)[0]}
         </div>
-        <div>
+        <div className="flex-1 min-w-0">
           <h1 className="text-lg font-bold" data-testid="profile-name">{profile.nickname || profile.name}</h1>
           <p className="text-sm text-muted-foreground">{profile.email || "文化遗产探索者"}</p>
         </div>
+        {isOwnProfile && (
+          <Link href="/settings" className="no-underline">
+            <Button variant="outline" size="sm" className="shrink-0" data-testid="button-edit-profile">
+              <Pencil size={13} className="mr-1.5"/>
+              编辑资料
+            </Button>
+          </Link>
+        )}
       </div>
 
       {/* Stats grid */}

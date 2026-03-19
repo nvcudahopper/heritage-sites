@@ -61,6 +61,15 @@ export interface IStorage {
 
   // Profile
   getUserProfile(userId: number): Promise<UserProfile | undefined>;
+
+  // Auth
+  registerUser(name: string, email: string, passwordHash: string): Promise<any>;
+  loginUser(email: string, passwordHash: string): Promise<any | null>;
+  createGuestUser(name: string): Promise<any>;
+  updateProfile(userId: number, name?: string, nickname?: string, email?: string, avatarUrl?: string, passwordHash?: string): Promise<any | null>;
+  getAllUsersWithStats(): Promise<any[]>;
+  toggleUserActive(userId: number): Promise<any | null>;
+  deleteUser(userId: number): Promise<boolean>;
 }
 
 const DATABASE_URL = process.env.DATABASE_URL || "";
@@ -528,6 +537,66 @@ export class PgStorage implements IStorage {
         mountain_count: checkedSites.filter(s => s.type === "mountain").length,
       },
     };
+  }
+
+  // ============ Auth ============
+  async registerUser(name: string, email: string, passwordHash: string) {
+    const existing = await sql`SELECT id FROM users WHERE email = ${email}`;
+    if (existing.length > 0) throw new Error("该邮箱已注册");
+    const rows = await sql`
+      INSERT INTO users (name, nickname, email, password_hash, role)
+      VALUES (${name}, ${name}, ${email}, ${passwordHash}, 'user')
+      RETURNING id, name, nickname, email, role, avatar_url, is_active`;
+    return rows[0];
+  }
+
+  async loginUser(email: string, passwordHash: string) {
+    const rows = await sql`SELECT id, name, nickname, email, role, avatar_url, is_active FROM users WHERE email = ${email} AND password_hash = ${passwordHash}`;
+    return rows.length > 0 ? rows[0] : null;
+  }
+
+  async createGuestUser(name: string) {
+    const rows = await sql`
+      INSERT INTO users (name, nickname, role)
+      VALUES (${name}, ${name}, 'guest')
+      RETURNING id, name, nickname, email, role, avatar_url, is_active`;
+    return rows[0];
+  }
+
+  async updateProfile(userId: number, name?: string, nickname?: string, email?: string, avatarUrl?: string, passwordHash?: string) {
+    const existing = await sql`SELECT * FROM users WHERE id = ${userId}`;
+    if (existing.length === 0) return null;
+    const c = existing[0];
+    const rows = await sql`
+      UPDATE users SET
+        name = ${name ?? c.name},
+        nickname = ${nickname ?? c.nickname},
+        email = ${email !== undefined ? email : c.email},
+        avatar_url = ${avatarUrl !== undefined ? avatarUrl : c.avatar_url},
+        password_hash = ${passwordHash ?? c.password_hash}
+      WHERE id = ${userId}
+      RETURNING id, name, nickname, email, role, avatar_url, is_active`;
+    return rows[0];
+  }
+
+  async getAllUsersWithStats() {
+    const users = await sql`SELECT id, name, nickname, email, role, is_active, avatar_url, created_at FROM users ORDER BY id`;
+    const result = [];
+    for (const u of users) {
+      const countRow = await sql`SELECT COUNT(*) as count FROM checkins WHERE user_id = ${u.id}`;
+      result.push({ ...u, checkin_count: Number(countRow[0].count) });
+    }
+    return result;
+  }
+
+  async toggleUserActive(userId: number) {
+    const rows = await sql`UPDATE users SET is_active = NOT is_active WHERE id = ${userId} AND role != 'admin' RETURNING id, is_active`;
+    return rows.length > 0 ? rows[0] : null;
+  }
+
+  async deleteUser(userId: number) {
+    const rows = await sql`DELETE FROM users WHERE id = ${userId} AND role != 'admin' RETURNING id`;
+    return rows.length > 0;
   }
 }
 

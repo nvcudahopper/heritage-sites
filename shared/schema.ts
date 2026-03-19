@@ -124,12 +124,26 @@ export const insertNewsLinkSchema = z.object({
 export type InsertNewsLink = z.infer<typeof insertNewsLinkSchema>;
 
 // ============ Users ============
+export type UserRole = 'admin' | 'user' | 'guest';
+
 export interface User {
   id: number;
   name: string;
   nickname: string | null;
   email: string | null;
   avatar_url: string | null;
+  role?: UserRole;
+  is_active?: boolean;
+}
+
+export interface AuthUser {
+  id: number;
+  name: string;
+  nickname: string | null;
+  email: string | null;
+  avatar_url: string | null;
+  role: UserRole;
+  is_active: boolean;
 }
 
 export const insertUserSchema = z.object({

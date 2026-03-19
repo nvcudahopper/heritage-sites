@@ -14,16 +14,36 @@ import AdminSiteEdit from "@/pages/admin/AdminSiteEdit";
 import AdminEvents from "@/pages/admin/AdminEvents";
 import AdminMedia from "@/pages/admin/AdminMedia";
 import AdminNews from "@/pages/admin/AdminNews";
+import AdminUsers from "@/pages/admin/AdminUsers";
+import Login from "@/pages/Login";
+import Settings from "@/pages/Settings";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
-import { useState, useEffect, createContext, useContext } from "react";
-import { Menu, X, Mountain, User as UserIcon, Settings } from "lucide-react";
+import { useState, useEffect, createContext, useContext, useCallback } from "react";
+import { Menu, X, Mountain, User as UserIcon, Settings as SettingsIcon, LogIn, Shield } from "lucide-react";
+import type { AuthUser } from "@shared/schema";
 
-// Simple "current user" context (MVP fake login)
-interface CurrentUser { id: number; name: string }
-export const UserContext = createContext<CurrentUser>({ id: 1, name: "访客" });
-export const useCurrentUser = () => useContext(UserContext);
+// ============ Auth Context ============
+interface AuthContextValue {
+  user: AuthUser | null;
+  login: (user: AuthUser) => void;
+  logout: () => void;
+  setUser: (user: AuthUser | null) => void;
+  isAdmin: boolean;
+}
 
-// Dark mode
+export const AuthContext = createContext<AuthContextValue>({
+  user: null,
+  login: () => {},
+  logout: () => {},
+  setUser: () => {},
+  isAdmin: false,
+});
+
+export function useAuth() {
+  return useContext(AuthContext);
+}
+
+// ============ Dark Mode ============
 function useDarkMode() {
   const [dark, setDark] = useState(() => {
     return window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -34,16 +54,12 @@ function useDarkMode() {
   return [dark, setDark] as const;
 }
 
+// ============ Header ============
 function Header() {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [dark, setDark] = useDarkMode();
   const [location] = useLocation();
-
-  const navItems = [
-    { href: "/", label: "首页", icon: Mountain },
-    { href: "/profile/1", label: "我的", icon: UserIcon },
-    { href: "/admin/sites", label: "管理", icon: Settings },
-  ];
+  const { user, isAdmin } = useAuth();
 
   return (
     <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
@@ -59,16 +75,41 @@ function Header() {
 
         {/* Desktop nav */}
         <nav className="hidden md:flex items-center gap-1">
-          {navItems.map(item => {
-            const active = location === item.href || (item.href !== "/" && location.startsWith(item.href));
-            return (
-              <Link key={item.href} href={item.href}
-                className={`px-3 py-1.5 rounded text-sm no-underline transition-colors ${active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted"}`}>
-                {item.label}
-              </Link>
-            );
-          })}
-          <button onClick={() => setDark(!dark)} className="ml-2 p-2 rounded hover:bg-muted transition-colors" aria-label="切换主题">
+          {/* Always: 首页 */}
+          <Link href="/"
+            className={`px-3 py-1.5 rounded text-sm no-underline transition-colors ${location === "/" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted"}`}
+            data-testid="nav-home">
+            首页
+          </Link>
+
+          {/* If logged in: 我的 */}
+          {user && (
+            <Link href={`/profile/${user.id}`}
+              className={`px-3 py-1.5 rounded text-sm no-underline transition-colors ${location.startsWith("/profile") ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted"}`}
+              data-testid="nav-profile">
+              我的
+            </Link>
+          )}
+
+          {/* If admin: 管理 */}
+          {isAdmin && (
+            <Link href="/admin/sites"
+              className={`px-3 py-1.5 rounded text-sm no-underline transition-colors ${location.startsWith("/admin") ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted"}`}
+              data-testid="nav-admin">
+              管理
+            </Link>
+          )}
+
+          {/* If NOT logged in: 登录 */}
+          {!user && (
+            <Link href="/login"
+              className={`px-3 py-1.5 rounded text-sm no-underline transition-colors ${location === "/login" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted"}`}
+              data-testid="nav-login">
+              登录
+            </Link>
+          )}
+
+          <button onClick={() => setDark(!dark)} className="ml-2 p-2 rounded hover:bg-muted transition-colors" aria-label="切换主题" data-testid="toggle-darkmode">
             {dark ? (
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
             ) : (
@@ -86,7 +127,7 @@ function Header() {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
             )}
           </button>
-          <button onClick={() => setMobileMenu(!mobileMenu)} className="p-2" aria-label="菜单">
+          <button onClick={() => setMobileMenu(!mobileMenu)} className="p-2" aria-label="菜单" data-testid="mobile-menu-toggle">
             {mobileMenu ? <X size={20}/> : <Menu size={20}/>}
           </button>
         </div>
@@ -95,30 +136,57 @@ function Header() {
       {/* Mobile dropdown */}
       {mobileMenu && (
         <div className="md:hidden border-t bg-background px-4 py-2 space-y-1">
-          {navItems.map(item => {
-            const Icon = item.icon;
-            return (
-              <Link key={item.href} href={item.href}
-                onClick={() => setMobileMenu(false)}
-                className="flex items-center gap-3 px-3 py-2 rounded text-sm no-underline hover:bg-muted transition-colors">
-                <Icon size={16} className="text-muted-foreground"/>
-                {item.label}
-              </Link>
-            );
-          })}
+          <Link href="/" onClick={() => setMobileMenu(false)}
+            className="flex items-center gap-3 px-3 py-2 rounded text-sm no-underline hover:bg-muted transition-colors"
+            data-testid="mobile-nav-home">
+            <Mountain size={16} className="text-muted-foreground"/>
+            首页
+          </Link>
+
+          {user && (
+            <Link href={`/profile/${user.id}`} onClick={() => setMobileMenu(false)}
+              className="flex items-center gap-3 px-3 py-2 rounded text-sm no-underline hover:bg-muted transition-colors"
+              data-testid="mobile-nav-profile">
+              <UserIcon size={16} className="text-muted-foreground"/>
+              我的
+            </Link>
+          )}
+
+          {isAdmin && (
+            <Link href="/admin/sites" onClick={() => setMobileMenu(false)}
+              className="flex items-center gap-3 px-3 py-2 rounded text-sm no-underline hover:bg-muted transition-colors"
+              data-testid="mobile-nav-admin">
+              <Shield size={16} className="text-muted-foreground"/>
+              管理
+            </Link>
+          )}
+
+          {!user && (
+            <Link href="/login" onClick={() => setMobileMenu(false)}
+              className="flex items-center gap-3 px-3 py-2 rounded text-sm no-underline hover:bg-muted transition-colors"
+              data-testid="mobile-nav-login">
+              <LogIn size={16} className="text-muted-foreground"/>
+              登录
+            </Link>
+          )}
         </div>
       )}
     </header>
   );
 }
 
+// ============ Router ============
 function AppRouter() {
   return (
     <Switch>
       <Route path="/" component={Home}/>
+      <Route path="/login" component={Login}/>
+      <Route path="/register" component={Login}/>
+      <Route path="/settings" component={Settings}/>
       <Route path="/sites/:id" component={SiteDetail}/>
       <Route path="/sites/:id/checkin" component={CheckinCreate}/>
       <Route path="/profile/:id" component={Profile}/>
+      <Route path="/admin/users" component={AdminUsers}/>
       <Route path="/admin/sites" component={AdminSites}/>
       <Route path="/admin/sites/new" component={AdminSiteEdit}/>
       <Route path="/admin/sites/:id/edit" component={AdminSiteEdit}/>
@@ -130,13 +198,28 @@ function AppRouter() {
   );
 }
 
+// ============ App ============
 function App() {
-  const [currentUser] = useState<CurrentUser>({ id: 1, name: "访客" });
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+
+  const login = useCallback((user: AuthUser) => {
+    setCurrentUser(user);
+  }, []);
+
+  const logout = useCallback(() => {
+    setCurrentUser(null);
+  }, []);
+
+  const setUser = useCallback((user: AuthUser | null) => {
+    setCurrentUser(user);
+  }, []);
+
+  const isAdmin = currentUser?.role === "admin";
 
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <UserContext.Provider value={currentUser}>
+        <AuthContext.Provider value={{ user: currentUser, login, logout, setUser, isAdmin }}>
           <Toaster />
           <Router hook={useHashLocation}>
             <div className="min-h-screen flex flex-col">
@@ -150,7 +233,7 @@ function App() {
               </footer>
             </div>
           </Router>
-        </UserContext.Provider>
+        </AuthContext.Provider>
       </TooltipProvider>
     </QueryClientProvider>
   );
