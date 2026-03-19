@@ -5,7 +5,7 @@ import {
   insertSiteSchema, insertSiteEventSchema, insertSiteMediaSchema,
   insertNewsLinkSchema, insertCheckinSchema, insertCheckinPhotoSchema,
   insertSiteRelationSchema, insertTagSchema, insertSiteTagSchema,
-} from "@shared/schema";
+} from "../shared/schema";
 
 export async function registerRoutes(
   httpServer: Server,

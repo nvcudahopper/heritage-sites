@@ -6,7 +6,7 @@ import type {
   Checkin, InsertCheckin, CheckinPhoto, InsertCheckinPhoto,
   Tag, InsertTag, SiteTag, InsertSiteTag,
   SiteWithDetails, SiteDetail, UserProfile,
-} from "@shared/schema";
+} from "../shared/schema";
 
 export interface IStorage {
   // Sites
